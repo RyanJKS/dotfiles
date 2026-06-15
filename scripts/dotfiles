@@ -1,0 +1,515 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TARGET_DIR="${DOTFILES_TARGET:-${HOME}}"
+
+PACKAGES=()
+SELECTED_PACKAGES=()
+COMMAND=""
+ARGS=()
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/dotfiles [--target <path>] <command> [args...]
+
+Commands:
+  help                   Show this help text
+  bootstrap              Install base repo dependencies on apt-based systems
+  list                   List available dotfile packages
+  path                   Print the repository and target paths
+  install [packages...]  Stow all packages, or only the named packages
+  restow [packages...]   Re-stow all packages, or only the named packages
+  uninstall [packages...] Remove symlinks for all packages, or only the named packages
+  preview [packages...]  Show what Stow would do without changing anything
+  conflicts [packages...] Check for install conflicts in the target directory
+  validate               Validate scripts, package structure, and Stow compatibility
+  new <package> [path]   Scaffold a new package, defaulting to .config/<package>
+  doctor                 Validate local prerequisites and target readiness
+
+Environment:
+  DOTFILES_TARGET        Override the install target (defaults to $HOME)
+
+Examples:
+  ./scripts/dotfiles list
+  ./scripts/dotfiles install
+  ./scripts/dotfiles preview nvim yazi
+  ./scripts/dotfiles conflicts
+  ./scripts/dotfiles new tmux
+  ./scripts/dotfiles --target "$HOME/.dotfiles-preview" restow
+EOF
+}
+
+log() {
+  printf '%s\n' "$*"
+}
+
+fail() {
+  printf 'Error: %s\n' "$*" >&2
+  exit 1
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+discover_packages() {
+  local path
+  local name
+
+  PACKAGES=()
+  shopt -s nullglob
+  for path in "${REPO_ROOT}"/*; do
+    [[ -d "${path}" ]] || continue
+    name="${path##*/}"
+    case "${name}" in
+      docs|scripts)
+        continue
+        ;;
+    esac
+    PACKAGES+=("${name}")
+  done
+  shopt -u nullglob
+
+  if [[ "${#PACKAGES[@]}" -eq 0 ]]; then
+    fail "No Stow packages were found in ${REPO_ROOT}"
+  fi
+
+  IFS=$'\n' PACKAGES=($(printf '%s\n' "${PACKAGES[@]}" | sort))
+  unset IFS
+}
+
+is_known_package() {
+  local needle="$1"
+  local package
+  for package in "${PACKAGES[@]}"; do
+    if [[ "${package}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolve_packages() {
+  local requested=("$@")
+  local package
+
+  if [[ "${#requested[@]}" -eq 0 ]]; then
+    SELECTED_PACKAGES=("${PACKAGES[@]}")
+    return
+  fi
+
+  SELECTED_PACKAGES=()
+  for package in "${requested[@]}"; do
+    if ! is_known_package "${package}"; then
+      fail "Unknown package: ${package}. Run './scripts/dotfiles list' to see valid packages."
+    fi
+    SELECTED_PACKAGES+=("${package}")
+  done
+}
+
+require_stow() {
+  if ! command_exists stow; then
+    fail "GNU Stow is required. Run './scripts/dotfiles bootstrap' or install 'stow' manually."
+  fi
+}
+
+print_paths() {
+  log "Repository root: ${REPO_ROOT}"
+  log "Target directory: ${TARGET_DIR}"
+}
+
+list_packages() {
+  local package
+  for package in "${PACKAGES[@]}"; do
+    printf '%s\n' "${package}"
+  done
+}
+
+bootstrap() {
+  if ! command_exists apt-get; then
+    fail "bootstrap currently supports apt-based systems only."
+  fi
+
+  if ! command_exists sudo; then
+    fail "bootstrap requires sudo to install packages."
+  fi
+
+  log "Installing base dependencies with apt-get..."
+  sudo apt-get update
+  sudo apt-get install -y \
+    git \
+    stow \
+    curl \
+    unzip \
+    ripgrep \
+    fd-find \
+    fzf \
+    build-essential
+
+  log "Base dependencies installed."
+  log "Next steps:"
+  log "  ./scripts/dotfiles doctor"
+  log "  ./scripts/dotfiles install"
+}
+
+run_stow() {
+  local mode="$1"
+  shift
+
+  require_stow
+  resolve_packages "$@"
+  mkdir -p "${TARGET_DIR}"
+
+  case "${mode}" in
+    install)
+      log "Installing packages into ${TARGET_DIR}: ${SELECTED_PACKAGES[*]}"
+      stow --target "${TARGET_DIR}" --dir "${REPO_ROOT}" "${SELECTED_PACKAGES[@]}"
+      ;;
+    restow)
+      log "Re-stowing packages into ${TARGET_DIR}: ${SELECTED_PACKAGES[*]}"
+      stow --restow --target "${TARGET_DIR}" --dir "${REPO_ROOT}" "${SELECTED_PACKAGES[@]}"
+      ;;
+    uninstall)
+      log "Removing packages from ${TARGET_DIR}: ${SELECTED_PACKAGES[*]}"
+      stow --delete --target "${TARGET_DIR}" --dir "${REPO_ROOT}" "${SELECTED_PACKAGES[@]}"
+      ;;
+    preview)
+      log "Previewing packages for ${TARGET_DIR}: ${SELECTED_PACKAGES[*]}"
+      stow --simulate --verbose=1 --target "${TARGET_DIR}" --dir "${REPO_ROOT}" "${SELECTED_PACKAGES[@]}"
+      ;;
+    *)
+      fail "Unsupported action: ${mode}"
+      ;;
+  esac
+}
+
+canonical_existing_path() {
+  local input="$1"
+  local dir
+  local base
+
+  dir="$(cd "$(dirname "${input}")" && pwd -P)"
+  base="$(basename "${input}")"
+  printf '%s/%s\n' "${dir}" "${base}"
+}
+
+resolve_link_target() {
+  local link_path="$1"
+  local raw_target
+  local base_dir
+  local combined
+
+  raw_target="$(readlink "${link_path}")" || return 1
+  if [[ "${raw_target}" = /* ]]; then
+    combined="${raw_target}"
+  else
+    base_dir="$(cd "$(dirname "${link_path}")" && pwd -P)"
+    combined="${base_dir}/${raw_target}"
+  fi
+
+  if [[ -e "${combined}" ]]; then
+    canonical_existing_path "${combined}"
+  else
+    printf '%s\n' "${combined}"
+  fi
+}
+
+first_blocking_parent() {
+  local relative_path="$1"
+  local current="${TARGET_DIR}"
+  local part
+  local -a parts=()
+  local i
+
+  IFS='/' read -r -a parts <<< "${relative_path}"
+  unset IFS
+
+  if [[ "${#parts[@]}" -le 1 ]]; then
+    return 1
+  fi
+
+  for ((i = 0; i < ${#parts[@]} - 1; i += 1)); do
+    part="${parts[i]}"
+    [[ -n "${part}" ]] || continue
+    current="${current}/${part}"
+    if [[ -e "${current}" && ! -d "${current}" ]]; then
+      printf '%s\n' "${current}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+check_conflicts() {
+  local package
+  local source_path
+  local source_abs
+  local relative_path
+  local target_path
+  local existing_target
+  local link_target
+  local blocking_parent
+  local conflict_count=0
+
+  resolve_packages "$@"
+
+  for package in "${SELECTED_PACKAGES[@]}"; do
+    log "Package: ${package}"
+    while IFS= read -r -d '' source_path; do
+      source_abs="$(canonical_existing_path "${source_path}")"
+      relative_path="${source_path#${REPO_ROOT}/${package}/}"
+      target_path="${TARGET_DIR}/${relative_path}"
+
+      if blocking_parent="$(first_blocking_parent "${relative_path}")"; then
+        printf '[conflict] %s (blocking parent is not a directory: %s)\n' "${relative_path}" "${blocking_parent}"
+        conflict_count=$((conflict_count + 1))
+        continue
+      fi
+
+      if [[ -L "${target_path}" ]]; then
+        link_target="$(resolve_link_target "${target_path}" || true)"
+        if [[ "${link_target}" == "${source_abs}" ]]; then
+          printf '[linked] %s\n' "${relative_path}"
+        else
+          printf '[conflict] %s (symlink points elsewhere: %s)\n' "${relative_path}" "${link_target:-unresolved}"
+          conflict_count=$((conflict_count + 1))
+        fi
+      elif [[ -e "${target_path}" ]]; then
+        existing_target="$(canonical_existing_path "${target_path}")"
+        if [[ "${existing_target}" == "${source_abs}" ]]; then
+          printf '[ok] %s\n' "${relative_path}"
+        else
+          printf '[conflict] %s (existing path: %s)\n' "${relative_path}" "${existing_target}"
+          conflict_count=$((conflict_count + 1))
+        fi
+      else
+        printf '[missing] %s\n' "${relative_path}"
+      fi
+    done < <(find "${REPO_ROOT}/${package}" -mindepth 1 \( -type f -o -type l \) -print0)
+    printf '\n'
+  done
+
+  if (( conflict_count > 0 )); then
+    fail "Found ${conflict_count} conflict(s)."
+  fi
+
+  log "No conflicts found."
+}
+
+validate_scripts() {
+  local script
+  shopt -s nullglob
+  for script in "${SCRIPT_DIR}"/*; do
+    [[ -f "${script}" ]] || continue
+    bash -n "${script}"
+  done
+  shopt -u nullglob
+}
+
+validate_packages() {
+  local package
+  local sandbox_target
+
+  for package in "${PACKAGES[@]}"; do
+    if ! find "${REPO_ROOT}/${package}" -mindepth 1 -print -quit | grep -q .; then
+      fail "Package is empty: ${package}"
+    fi
+  done
+
+  require_stow
+  sandbox_target="$(mktemp -d /tmp/dotfiles-validate.XXXXXX)"
+  stow --simulate --target "${sandbox_target}" --dir "${REPO_ROOT}" "${PACKAGES[@]}" >/dev/null
+  rmdir "${sandbox_target}"
+}
+
+validate_repo() {
+  log "Validating scripts..."
+  validate_scripts
+
+  log "Validating packages..."
+  validate_packages
+
+  if [[ ! -f "${REPO_ROOT}/README.md" ]]; then
+    fail "README.md is missing."
+  fi
+
+  if [[ ! -f "${REPO_ROOT}/docs/repository-guide.md" ]]; then
+    fail "docs/repository-guide.md is missing."
+  fi
+
+  log "Validation passed."
+}
+
+validate_package_name() {
+  local package_name="$1"
+
+  if [[ ! "${package_name}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    fail "Invalid package name: ${package_name}"
+  fi
+}
+
+new_package() {
+  local package_name="${1:-}"
+  local relative_root
+  local package_dir
+
+  [[ -n "${package_name}" ]] || fail "Usage: ./scripts/dotfiles new <package> [path]"
+  validate_package_name "${package_name}"
+
+  relative_root="${2:-.config/${package_name}}"
+  package_dir="${REPO_ROOT}/${package_name}/${relative_root}"
+
+  if [[ -e "${REPO_ROOT}/${package_name}" ]]; then
+    fail "Package already exists: ${package_name}"
+  fi
+
+  mkdir -p "${package_dir}"
+
+  log "Created package scaffold:"
+  log "  ${package_name}/${relative_root}/"
+  log "Next steps:"
+  log "  1. Add the real config files for ${package_name}"
+  log "  2. Run ./scripts/dotfiles preview ${package_name}"
+  log "  3. Run ./scripts/dotfiles restow ${package_name}"
+  log "  4. Update README.md"
+}
+
+check_binary() {
+  local label="$1"
+  local binary="$2"
+
+  if command_exists "${binary}"; then
+    printf '[ok] %s (%s)\n' "${label}" "${binary}"
+  else
+    printf '[missing] %s (%s)\n' "${label}" "${binary}"
+  fi
+}
+
+doctor() {
+  local package
+  local parent_dir
+
+  print_paths
+  printf '\n'
+
+  log "Core tooling:"
+  check_binary "bash" "bash"
+  check_binary "git" "git"
+  check_binary "stow" "stow"
+
+  printf '\n'
+  log "Managed package binaries:"
+  for package in "${PACKAGES[@]}"; do
+    case "${package}" in
+      nvim)
+        check_binary "Neovim" "nvim"
+        ;;
+      yazi)
+        check_binary "Yazi" "yazi"
+        ;;
+      zellij)
+        check_binary "Zellij" "zellij"
+        ;;
+      *)
+        printf '[info] %s (no binary check configured)\n' "${package}"
+        ;;
+    esac
+  done
+
+  printf '\n'
+  log "Repository packages:"
+  list_packages
+
+  printf '\n'
+  if [[ -d "${TARGET_DIR}" ]]; then
+    printf '[ok] target directory exists: %s\n' "${TARGET_DIR}"
+    if [[ -w "${TARGET_DIR}" ]]; then
+      printf '[ok] target directory is writable: %s\n' "${TARGET_DIR}"
+    else
+      printf '[warn] verify write permissions before installing into: %s\n' "${TARGET_DIR}"
+    fi
+  else
+    printf '[info] target directory will be created on install: %s\n' "${TARGET_DIR}"
+    parent_dir="$(dirname "${TARGET_DIR}")"
+    if [[ -w "${parent_dir}" ]]; then
+      printf '[ok] parent directory is writable: %s\n' "${parent_dir}"
+    else
+      printf '[warn] verify write permissions before installing into: %s\n' "${TARGET_DIR}"
+    fi
+  fi
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -t|--target)
+        [[ $# -ge 2 ]] || fail "Missing value for $1"
+        TARGET_DIR="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  COMMAND="${1:-help}"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
+  ARGS=("$@")
+}
+
+discover_packages
+parse_args "$@"
+
+case "${COMMAND}" in
+  help)
+    usage
+    ;;
+  bootstrap)
+    bootstrap
+    ;;
+  list)
+    list_packages
+    ;;
+  path)
+    print_paths
+    ;;
+  install)
+    run_stow install "${ARGS[@]}"
+    ;;
+  restow)
+    run_stow restow "${ARGS[@]}"
+    ;;
+  uninstall)
+    run_stow uninstall "${ARGS[@]}"
+    ;;
+  preview)
+    run_stow preview "${ARGS[@]}"
+    ;;
+  conflicts)
+    check_conflicts "${ARGS[@]}"
+    ;;
+  validate)
+    validate_repo
+    ;;
+  new)
+    new_package "${ARGS[@]}"
+    ;;
+  doctor)
+    doctor
+    ;;
+  *)
+    fail "Unknown command: ${COMMAND}. Run './scripts/dotfiles help' for usage."
+    ;;
+esac
