@@ -1,0 +1,21 @@
+# Neovim generated state
+nvim/.config/nvim/.luarc.json
+
+# Yazi runtime/state files
+yazi/.config/yazi/package.toml.lock
+
+# Local overrides
+*.local
+*.local.lua
+*.local.toml
+*.local.kdl
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+credentials*
+secrets*
