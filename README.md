@@ -6,10 +6,10 @@ Each top-level directory in this repository is a standalone Stow package. That k
 
 ## Managed packages
 
-| Package | Target path | Notes |
-| --- | --- | --- |
-| `nvim` | `~/.config/nvim` | LazyVim-based Neovim setup with custom snacks and formatting behavior. |
-| `yazi` | `~/.config/yazi` | Yazi configuration with custom keymaps and file-management shortcuts. |
+| Package  | Target path        | Notes                                                                  |
+| -------- | ------------------ | ---------------------------------------------------------------------- |
+| `nvim`   | `~/.config/nvim`   | LazyVim-based Neovim setup with custom snacks and formatting behavior. |
+| `yazi`   | `~/.config/yazi`   | Yazi configuration with custom keymaps and file-management shortcuts.  |
 | `zellij` | `~/.config/zellij` | Zellij configuration with modal keybindings and tmux-style navigation. |
 
 ## Quick start
@@ -45,19 +45,19 @@ Use the repo helper instead of memorizing raw `stow` commands:
 
 ### Commands
 
-| Command | Purpose |
-| --- | --- |
-| `bootstrap` | Install base dependencies required to manage the repo on apt-based Linux systems. |
-| `list` | Show all available Stow packages detected in the repository. |
-| `path` | Print the repository root and current target directory. |
-| `install [packages...]` | Symlink all packages, or only the named packages, into the target directory. |
-| `restow [packages...]` | Re-apply packages using `stow --restow` after config changes. |
-| `uninstall [packages...]` | Remove symlinks for all packages, or only the named packages. |
-| `preview [packages...]` | Dry-run a Stow operation so you can inspect the symlink plan before changing anything. |
-| `conflicts [packages...]` | Detect path collisions that would block a clean install. |
-| `doctor` | Check required commands, target path readiness, and package availability. |
-| `validate` | Validate scripts, package structure, and Stow compatibility. |
-| `new <package> [path]` | Scaffold a new package directory, defaulting to `.config/<package>`. |
+| Command                   | Purpose                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `bootstrap`               | Install base dependencies required to manage the repo on apt-based Linux systems.      |
+| `list`                    | Show all available Stow packages detected in the repository.                           |
+| `path`                    | Print the repository root and current target directory.                                |
+| `install [packages...]`   | Symlink all packages, or only the named packages, into the target directory.           |
+| `restow [packages...]`    | Re-apply packages using `stow --restow` after config changes.                          |
+| `uninstall [packages...]` | Remove symlinks for all packages, or only the named packages.                          |
+| `preview [packages...]`   | Dry-run a Stow operation so you can inspect the symlink plan before changing anything. |
+| `conflicts [packages...]` | Detect path collisions that would block a clean install.                               |
+| `doctor`                  | Check required commands, target path readiness, and package availability.              |
+| `validate`                | Validate scripts, package structure, and Stow compatibility.                           |
+| `new <package> [path]`    | Scaffold a new package directory, defaulting to `.config/<package>`.                   |
 
 For maintainers, `./scripts/validate` is a convenience wrapper around `./scripts/dotfiles validate`.
 
@@ -151,6 +151,26 @@ Scaffold a new package:
 ./scripts/dotfiles new tmux
 ./scripts/dotfiles new ghostty .config/ghostty
 ```
+
+## GNU Direct Operations
+
+Other direct Stow operations follow the same pattern:
+
+# Preview
+
+stow --simulate --verbose --target="$HOME" lazygit
+
+# Install
+
+stow --target="$HOME" lazygit
+
+# Re-apply
+
+stow --restow --target="$HOME" lazygit
+
+# Uninstall
+
+stow --delete --target="$HOME" lazygit
 
 ## Extending the repo
 
