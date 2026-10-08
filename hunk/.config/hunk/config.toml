@@ -1,0 +1,5 @@
+theme = "terminal"
+mode = "split"
+line_numbers = true
+sidebar = "auto"
+prompt_save_view_preferences = false

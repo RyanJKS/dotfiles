@@ -406,6 +406,16 @@ doctor() {
   log "Managed package binaries:"
   for package in "${PACKAGES[@]}"; do
     case "${package}" in
+      git)
+        check_binary "Git" "git"
+        ;;
+      hunk)
+        check_binary "Hunk" "hunk"
+        ;;
+      lazygit)
+        check_binary "LazyGit" "lazygit"
+        check_binary "Delta" "delta"
+        ;;
       nvim)
         check_binary "Neovim" "nvim"
         ;;

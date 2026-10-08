@@ -1,0 +1,11 @@
+[core]
+	pager = hunk pager --mode split
+
+[diff]
+	tool = hunk
+
+[difftool]
+	prompt = false
+
+[difftool "hunk"]
+	cmd = hunk diff --mode split --files \"$LOCAL\" \"$REMOTE\"

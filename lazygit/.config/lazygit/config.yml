@@ -3,6 +3,22 @@ gui:
 
 git:
   pagers:
-    - pager: delta --dark --side-by-side --line-numbers --paging=never
+    - pager: delta --dark --side-by-side --line-numbers --paging=never --width="${LAZYGIT_COLUMNS:-120}"
       colorArg: always
-    - {}
+
+customCommands:
+  - key: H
+    context: files
+    command: hunk diff --mode split
+    description: Review working tree in Hunk
+    output: terminal
+  - key: I
+    context: files
+    command: hunk diff --mode split --staged
+    description: Review staged changes in Hunk
+    output: terminal
+  - key: H
+    context: commits
+    command: hunk show --mode split {{.SelectedLocalCommit.Hash}}
+    description: Review selected commit in Hunk
+    output: terminal

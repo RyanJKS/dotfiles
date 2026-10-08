@@ -8,6 +8,9 @@ Each top-level directory in this repository is a standalone Stow package. That k
 
 | Package  | Target path        | Notes                                                                  |
 | -------- | ------------------ | ---------------------------------------------------------------------- |
+| `git` | `~/.config/git/config` | Hunk pager and difftool without managing your Git identity. |
+| `hunk` | `~/.config/hunk` | Hunk diff viewer with terminal colors, side-by-side layout, and line numbers. |
+| `lazygit` | `~/.config/lazygit` | Side-by-side Delta rendering and interactive Hunk reviews. |
 | `nvim`   | `~/.config/nvim`   | LazyVim-based Neovim setup with custom snacks and formatting behavior. |
 | `yazi`   | `~/.config/yazi`   | Yazi configuration with custom keymaps and file-management shortcuts.  |
 | `zellij` | `~/.config/zellij` | Zellij configuration with modal keybindings and tmux-style navigation. |
@@ -86,16 +89,46 @@ Useful for the helper workflows:
 
 Required to use individual packages:
 
+- `git` and `hunk` for the `git` package
+- `hunk` for the `hunk` package
+- `lazygit` and `delta` ([Delta](https://github.com/dandavison/delta#installation)) for the `lazygit` package
 - `nvim` for the `nvim` package
 - `yazi` for the `yazi` package
 - `zellij` for the `zellij` package
 
 The helper CLI checks for managed application binaries in `doctor`, but it does not install every application automatically because package sources and preferred versions vary by machine.
 
+## Hunk diff reviews
+
+Install Hunk using its [installation guide](https://github.com/modem-dev/hunk#install), then link the configuration:
+
+```bash
+./scripts/dotfiles install git hunk lazygit nvim
+```
+
+The Git package sets `hunk pager --mode split` as the default pager and Hunk as the difftool. Existing settings in `~/.gitconfig` take precedence over `~/.config/git/config`; remove any old pager, difftool, or Delta filter overrides there if needed. `git diff` and `git show` open Hunk, and `git difftool` compares files in Hunk. Use `hunk diff` to include untracked files.
+
+Hunk defaults to side-by-side comparisons of old and new content, including Git pager and difftool reviews. Neovim's built-in diff windows also split vertically. LazyGit uses Delta to render old and new content beside each other inside its default diff pane, including when opened in Neovim with `<leader>gg`. Its staged and unstaged pane layout keeps the default behavior. Review, stage, commit, and push in LazyGit; open Hunk for a separate full review.
+
+Neovim opens Hunk in a full-size terminal at the Git root:
+
+- `<leader>gd`: review working-tree changes.
+- `<leader>gD`: review staged changes.
+- `<leader>gW`: watch working-tree changes.
+- `<leader>gH`: browse commit history.
+- `:Hunk`: review working-tree changes, or pass arguments such as `:Hunk show HEAD~1`.
+
+These diff mappings replace the corresponding LazyVim diff picker mappings. Quit Hunk with `q` to return to Neovim.
+
+In LazyGit, press `H` in the files panel to review working-tree changes, `I` to review staged changes, or `H` in the commits panel to review the selected commit. Hunk runs in the terminal while LazyGit is suspended. Delta renders the embedded diff pane because Hunk requires its own interactive terminal.
+
 ## Repository layout
 
 ```text
 .
+├── git/                     # Stow package -> ~/.config/git/config
+├── hunk/                    # Stow package -> ~/.config/hunk
+├── lazygit/                 # Stow package -> ~/.config/lazygit
 ├── docs/                    # Maintainer documentation
 ├── nvim/                    # Stow package -> ~/.config/nvim
 ├── scripts/                 # Repo helper scripts
